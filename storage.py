@@ -2,7 +2,7 @@ import datetime
 import os
 import sqlite3
 
-DB_PATH = os.path.join(
+DB_PATH = os.environ.get("DB_PATH") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "bot.db",
 )

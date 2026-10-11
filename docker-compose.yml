@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    container_name: efqbot
+    restart: unless-stopped
+    environment:
+      DB_PATH: /data/bot.db
+      # Если вынесешь токен из кода в env — раскомментируй и правь bot.py на os.getenv:
+      # BOT_TOKEN: "8952102870:..."
+    volumes:
+      # БД сохраняется на хосте в ./data/bot.db (переживает пересборку)
+      - ./data:/data
