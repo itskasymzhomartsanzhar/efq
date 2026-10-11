@@ -71,6 +71,42 @@ queue_workers: dict[int, asyncio.Task] = {}
 
 TECH_BREAK = "Включен технический перерыв. Мы скоро вернемся."
 
+DEPRECATION_NOTE = (
+    "<b><i>Запись от 2026-10-11, оставленная неким owola-swydk:</i></b>\n\n"
+    "Привет! Если ты читаешь это... значит проект остановлен.\n\n"
+    "Было принято решение задепрекейтить проект...\n\n"
+    "Идея создать этого бота появилась от фразы - "
+    "\"У меня греется телефон, когда я прохожу Quizzer\".\n\n"
+    "<b>Всего за 35 секунд</b> были найдены первые уязвимости в API Quizzer. "
+    "Через час ещё 2.\n"
+    "Через день я понял, что можно автоматизировать процесс.\n\n"
+    "Далее были написаны:\n"
+    "Beta версия - успешно прошла тесты инъекции через API\n"
+    "v0.0.0.1 - алгоритм на 50 строк, что просто делать 1 post запрос\n"
+    "v0.924.0.2 - добавлена авторизация от имени пользователя. "
+    "К слову, пароль был предельно прост - [123456, 654321]\n"
+    "v0.98.33.0.4.8.3.9 - обход системы, методов отправки ложных выполнений заданий\n"
+    "v1.0 - бот по автоматическому прохождению теста готов.\n\n"
+    "От IT департамента AiPlus поступало много обновлений продукта, "
+    "что значит - они обнаружат уязвимости рано или поздно.\n"
+    "Был создан совет директоров во главе с owola-swydk, также iacc, gpro, zemnix, "
+    "команда vetryx и <s>ещё одним независимым лицом(скрыто)</s>.\n"
+    "Спустя 5 часов совещания было принято решение закрыть проект.\n\n\n"
+    "Последним известным обновлением было v1.22.09.2.0.0.9IRLA-505:\n"
+    "-Бот перенесен на сервера Майами, США\n"
+    "-Добавлена защита конфиденциальности\n"
+    "-Добавлены кнопки Сделать ещё и Сделать 3\n\n\n"
+    "Последнее обновление - закомчено, git push...\n\n"
+    "Важно то, что мы хотели, чтобы ученики учились, а не боялись Quizzer.\n"
+    "Мы не знали что делаем, просто пробовали.\n\n\n"
+    "Пришли к решению. Quizzer EF - deprecated.\n"
+    "<b>Мы действовали добросовестно, результаты действительны "
+    "и не могут быть изменены.</b>\n\n\n"
+    "<i>Осталось...\n"
+    "Стоп, кое что я забыл...\n"
+    "Может...не помню. Пусть. Пазл можно собрать имея всего лишь 5 из 6 деталек?...</i>"
+)
+
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(
@@ -570,6 +606,14 @@ def build_subject_keyboard(
             )
         ]
     )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="Последняя запись",
+                callback_data="note",
+            )
+        ]
+    )
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -895,14 +939,24 @@ async def show_confirmation(
         overdue = False
         soon = False
 
-    rows = [
-        [
-            InlineKeyboardButton(
-                text="Сделать 1",
-                callback_data=f"do:{topic_id_value}",
-            )
-        ]
+    is_assignment = bool(topic and topic.get("subject"))
+
+    first_row = [
+        InlineKeyboardButton(
+            text="Сделать 1",
+            callback_data=f"do:{topic_id_value}",
+        )
     ]
+
+    if is_assignment:
+        first_row.append(
+            InlineKeyboardButton(
+                text="Сделать 3",
+                callback_data=f"do3:{topic_id_value}",
+            )
+        )
+
+    rows = [first_row]
 
     if need >= 2 and done < need:
         rows.append(
@@ -1083,20 +1137,45 @@ def next_batch_id() -> int:
     return _batch_seq
 
 
-async def _safe_send(chat_id: int, text: str) -> int | None:
+def build_more_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Сделать ещё",
+                    callback_data="more",
+                )
+            ]
+        ]
+    )
+
+
+async def _safe_send(
+    chat_id: int,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> int | None:
     try:
-        message = await bot.send_message(chat_id, text)
+        message = await bot.send_message(
+            chat_id, text, reply_markup=reply_markup
+        )
         return getattr(message, "message_id", None)
     except Exception:
         return None
 
 
-async def _safe_edit_msg(chat_id: int, message_id: int, text: str) -> int | None:
+async def _safe_edit_msg(
+    chat_id: int,
+    message_id: int,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> int | None:
     try:
         await bot.edit_message_text(
             text,
             chat_id=chat_id,
             message_id=message_id,
+            reply_markup=reply_markup,
         )
         return message_id
     except TelegramBadRequest as error:
@@ -1105,7 +1184,7 @@ async def _safe_edit_msg(chat_id: int, message_id: int, text: str) -> int | None
     except Exception:
         pass
 
-    return await _safe_send(chat_id, text)
+    return await _safe_send(chat_id, text, reply_markup)
 
 
 async def prepare_task(task: dict[str, Any]) -> bool:
@@ -1298,9 +1377,13 @@ async def queue_worker(user_id: int) -> None:
             status_id = head.get("message_id")
 
             if status_id:
-                status_id = await _safe_edit_msg(chat_id, status_id, start_text)
+                status_id = await _safe_edit_msg(
+                    chat_id, status_id, start_text, build_more_keyboard()
+                )
             else:
-                status_id = await _safe_send(chat_id, start_text)
+                status_id = await _safe_send(
+                    chat_id, start_text, build_more_keyboard()
+                )
 
         done = 0
         last = None
@@ -1355,16 +1438,69 @@ async def queue_worker(user_id: int) -> None:
 
             # очередь не пуста -> обновляем статус-сообщение редактированием
             if status_id:
-                status_id = await _safe_edit_msg(chat_id, status_id, message)
+                status_id = await _safe_edit_msg(
+                    chat_id, status_id, message, build_more_keyboard()
+                )
             else:
-                status_id = await _safe_send(chat_id, message)
+                status_id = await _safe_send(
+                    chat_id, message, build_more_keyboard()
+                )
 
             await asyncio.sleep(2)
         else:
             # вся очередь готова -> отдельное сообщение «Готово»
             message += "\n\nОчередь пуста."
             start_announced = False
-            await _safe_send(chat_id, message)
+            await _safe_send(chat_id, message, build_more_keyboard())
+
+
+@dp.callback_query(F.data == "more")
+async def more_callback(
+    callback: CallbackQuery,
+) -> None:
+    await callback.answer()
+
+    user_id = callback.from_user.id
+    login = db.get(str(user_id))
+
+    if not login:
+        return
+
+    try:
+        await ensure_auth(user_id, login)
+        subjects = await get_allowed_subjects(user_id)
+        overdue, soon = await assignment_counts(user_id)
+
+        user_navigation.pop(user_id, None)
+
+        await callback.message.answer(
+            "<b>Добавить в очередь — выберите предмет:</b>",
+            reply_markup=build_subject_keyboard(subjects, overdue, soon),
+        )
+
+    except Exception as error:
+        await report_error(callback, error)
+
+
+@dp.callback_query(F.data == "note")
+async def note_callback(
+    callback: CallbackQuery,
+) -> None:
+    await callback.answer()
+
+    await safe_edit(callback.message,
+        DEPRECATION_NOTE,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Предметы",
+                        callback_data="subjects",
+                    )
+                ]
+            ]
+        ),
+    )
 
 
 @dp.callback_query(F.data.startswith("do:"))
@@ -1441,14 +1577,11 @@ async def do_callback(
         await report_error(callback, error)
 
 
-@dp.callback_query(F.data.startswith("doall:"))
-async def doall_callback(
+async def enqueue_topic_batch(
     callback: CallbackQuery,
+    topic_id_value: str,
+    count: int,
 ) -> None:
-    await callback.answer()
-
-    topic_id_value = callback.data.split(":", 1)[1]
-
     user_id = callback.from_user.id
     state = user_navigation.get(user_id)
 
@@ -1468,16 +1601,13 @@ async def doall_callback(
 
     subject = resolve_subject(state, topic_id_value)
     title = topic_label(topic, 0)
-    done = int(topic.get("passes90") or 0)
-    need = int(topic.get("masteryMax") or 0)
-    remaining = max(1, need - done)
 
     busy = bool(task_queues.get(user_id)) or worker_active(user_id)
 
     batch_id = next_batch_id()
     position = 0
 
-    for _ in range(remaining):
+    for _ in range(count):
         position = await enqueue_task(
             user_id,
             {
@@ -1490,16 +1620,45 @@ async def doall_callback(
                 "score": None,
                 "pool": None,
                 "batch_id": batch_id,
-                "batch_size": remaining,
+                "batch_size": count,
             },
         )
 
     if busy:
         await safe_edit(callback.message,
-            f"В очередь добавлено задач: <b>{remaining}</b>\n"
+            f"В очередь добавлено задач: <b>{count}</b>\n"
             f"Тема: «{html.escape(title)}», score — максимум.\n"
             f"Всего в очереди: <b>{position}</b>.",
         )
+
+
+@dp.callback_query(F.data.startswith("doall:"))
+async def doall_callback(
+    callback: CallbackQuery,
+) -> None:
+    await callback.answer()
+
+    topic_id_value = callback.data.split(":", 1)[1]
+    topic = find_topic(
+        user_navigation.get(callback.from_user.id),
+        topic_id_value,
+    )
+
+    need = int(topic.get("masteryMax") or 0) if topic else 0
+    done = int(topic.get("passes90") or 0) if topic else 0
+    remaining = max(1, need - done)
+
+    await enqueue_topic_batch(callback, topic_id_value, remaining)
+
+
+@dp.callback_query(F.data.startswith("do3:"))
+async def do3_callback(
+    callback: CallbackQuery,
+) -> None:
+    await callback.answer()
+
+    topic_id_value = callback.data.split(":", 1)[1]
+    await enqueue_topic_batch(callback, topic_id_value, 3)
 
 
 @dp.callback_query(F.data.startswith("score:"))
@@ -1849,6 +2008,7 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Лента действий", callback_data="adm:feed")],
             [InlineKeyboardButton(text="Счётчики", callback_data="adm:stats")],
             [InlineKeyboardButton(text="Рассылки", callback_data="adm:bcast")],
+            [InlineKeyboardButton(text="Разослать запись", callback_data="adm:notebcast")],
         ]
     )
 
@@ -2050,6 +2210,36 @@ async def admin_callback(
             await show_admin_stats(callback)
         elif action == "bcast":
             await show_admin_bcast(callback)
+        elif action == "notebcast":
+            await safe_edit(callback.message,
+                f"Разослать «Последнюю запись» всем <b>{len(db)}</b> пользователям?\n\n"
+                f"Дойдёт только тем, кто запускал бота. "
+                f"После отправки отменить нельзя.",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="Да, разослать всем",
+                                callback_data="adm:notebcast_go",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="Отмена",
+                                callback_data="adm:menu",
+                            )
+                        ],
+                    ]
+                ),
+            )
+        elif action == "notebcast_go":
+            await safe_edit(callback.message, "Рассылаю запись...")
+            ok, fail = await send_broadcast("all", DEPRECATION_NOTE)
+            await safe_edit(callback.message,
+                f"Запись разослана.\n"
+                f"Отправлено: <b>{ok}</b>, не доставлено: <b>{fail}</b>",
+                reply_markup=admin_back_keyboard(),
+            )
         elif action.startswith("block:"):
             tg_id = action.split(":", 1)[1]
             user = storage.get_user(tg_id)
